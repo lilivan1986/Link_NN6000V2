@@ -90,8 +90,6 @@ jobs:
           # 克隆仓库
           echo "克隆仓库: ${{ env.REPO_URL }} 分支: ${{ env.REPO_BRANCH }}"
           git clone --depth 1 -b ${{ env.REPO_BRANCH }} ${{ env.REPO_URL }} ./action_build
-          
-          # 写入 repo_flag 文件（用于缓存 key）
           echo "${{ env.REPO_URL }}/${{ env.REPO_BRANCH }}" > ./repo_flag
           
           # 移除国内下载源
@@ -106,37 +104,61 @@ jobs:
           path: |
             ./action_build/.ccache
             ./action_build/staging_dir
-          key: ${{ matrix.os }}-${{ hashFiles('repo_flag') }}-${{ env.BUILD_DATE }}
+          key: ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}
           restore-keys: |
-            ${{ matrix.os }}-${{ hashFiles('repo_flag') }}-
+            ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}-
 
       - name: Refresh the cache
         run: |
           if [ -d "./action_build/staging_dir" ]; then
-            find "./action_build/staging_dir" -type d -name "stamp" | while read -r dir; do
-                find "$dir" -type f -exec touch {} +
-            done
+            # 更新所有 stamp 文件的时间戳
+            find "./action_build/staging_dir" -type d -name "stamp" -exec touch {} +
+            # 更新 staging_dir 下所有文件的时间戳
+            find "./action_build/staging_dir" -type f -exec touch {} +
+            # 创建构建完成标记
             mkdir -p ./action_build/tmp && echo "1" > ./action_build/tmp/.build
           fi
 
       - name: Build Firmware
-        run: ./nn6000v2/scripts/build.sh ${{ env.DEVICE_MODEL }}
-
-      - name: Get Kernel Verion
         run: |
+          ./nn6000v2/scripts/build.sh ${{ env.DEVICE_MODEL }}
+          
           # 获取内核版本
-          echo "KVER=$(grep -oP "^kernel.*" ./firmware/*.manifest | grep -oP "[4-6]\.[0-9]{1,3}\.[0-9]{1,3}")" >> $GITHUB_ENV
+          FIRST_MANIFEST=$(ls ./firmware/immortalwrt-*.manifest 2>/dev/null | head -1)
+          if [ -n "$FIRST_MANIFEST" ]; then
+            echo "Manifest 文件：$FIRST_MANIFEST"
+            echo "查找内核版本..."
+            KVER=$(grep "^kernel " "$FIRST_MANIFEST" | grep -oE "[4-6]\.[0-9]+\.[0-9]+" | head -1 || echo "")
+            if [ -n "$KVER" ]; then
+              echo "KVER=$KVER" >> $GITHUB_ENV
+              echo "内核版本：$KVER"
+            else
+              echo "KVER=unknown" >> $GITHUB_ENV
+              echo "未找到内核版本"
+              echo "Manifest 文件内容预览:"
+              head -20 "$FIRST_MANIFEST"
+            fi
+          else
+            echo "KVER=unknown" >> $GITHUB_ENV
+            echo "manifest 文件不存在"
+          fi
 
       - name: Delete Old Cache
         run: |
-          # 获取缓存列表并删除
-          gh cache list --key ${{ matrix.os }}-${{ hashFiles('repo_flag') }}- --json key --jq '.[] | .key' | while read -r key; do
-            gh cache delete "$key"
+          # 删除所有旧缓存
+          echo "清理所有旧缓存..."
+          
+          gh cache list --json id --jq '.[].id' 2>/dev/null | while read -r cache_id; do
+            if [ -n "$cache_id" ]; then
+              echo "删除缓存 ID: $cache_id"
+              gh cache delete "$cache_id" 2>/dev/null || true
+            fi
           done
+          
           # 输出缓存状态
           echo "========cache status========"
-          echo "ccache: $(du -sh ./action_build/.ccache | cut -f 1)"
-          echo "staging: $(du -sh ./action_build/staging_dir | cut -f 1)"
+          echo "ccache: $(du -sh ./action_build/.ccache 2>/dev/null | cut -f 1 || echo 'N/A')"
+          echo "staging: $(du -sh ./action_build/staging_dir 2>/dev/null | cut -f 1 || echo 'N/A')"
 
       - name: Machine Information
         run: |
@@ -149,65 +171,16 @@ jobs:
 
       - name: Prepare Release Body
         run: |
-          echo "云编译发布" > release_body.txt
-          echo "源码：${{ env.BUILD_SRC }}" >> release_body.txt
-          echo "Kernel: ${{ env.KVER }}" >> release_body.txt
-          echo "WIFI 密码：147258369" >> release_body.txt
-          echo "LAN 地址：10.0.0.1" >> release_body.txt
-
-      - name: Clean Old Releases, Tags and Workflow Runs
-        run: |
-          # 获取当前发布的 tag
-          CURRENT_TAG="${{ env.BUILD_DATE }}_${{ env.DEVICE_MODEL }}"
-          echo "当前编译版本：$CURRENT_TAG"
-          
-          # ========== 清理 Releases 和 Tags ==========
-          echo "开始清理旧的 releases..."
-          gh release list --limit 100 --json tagName --jq '.[].tagName' | while read -r old_tag; do
-            if [ -n "$old_tag" ] && [ "$old_tag" != "$CURRENT_TAG" ]; then
-              echo "删除旧版本：$old_tag"
-              gh release delete "$old_tag" --cleanup-tag --yes || true
-            fi
-          done
-          
-          echo "清理孤立的 tags..."
-          git fetch --tags
-          git tag -l | grep -v "$CURRENT_TAG" | while read -r tag; do
-            echo "删除孤立 tag: $tag"
-            git tag -d "$tag" || true
-          done
-          
-          echo "Releases 和 Tags 清理完成！"
-          
-          # ========== 清理 Workflow 运行记录 ==========
-          echo "开始清理旧的 workflow 运行记录..."
-          
-          # 获取当前工作流 ID
-          WORKFLOW_ID=$(gh api /repos/${{ github.repository }}/actions/workflows | jq -r '.workflows[] | select(.name=="Go_Release") | .id')
-          echo "Workflow ID: $WORKFLOW_ID"
-          
-          if [ -z "$WORKFLOW_ID" ]; then
-            echo "错误：无法获取 Workflow ID"
-            exit 1
-          fi
-          
-          # 获取所有运行记录
-          CURRENT_RUN_ID=${{ github.run_id }}
-          echo "当前运行 ID: $CURRENT_RUN_ID"
-          
-          # 获取所有运行记录并删除旧的
-          gh api /repos/${{ github.repository }}/actions/workflows/$WORKFLOW_ID/runs --paginate --jq '.workflow_runs[] | select(.id != '"$CURRENT_RUN_ID"') | .id' | head -n -1 | while read -r run_id; do
-            if [ -n "$run_id" ]; then
-              echo "删除 workflow 运行记录：$run_id"
-              gh api -X DELETE /repos/${{ github.repository }}/actions/runs/$run_id || echo "删除失败：$run_id"
-            fi
-          done
-          
-          # 验证删除结果
-          REMAINING_RUNS=$(gh api /repos/${{ github.repository }}/actions/workflows/$WORKFLOW_ID/runs --paginate --jq '.workflow_runs | length')
-          echo "剩余运行记录数：$REMAINING_RUNS"
-          
-          echo "所有清理工作完成！"
+          {
+            echo "## 版本信息"
+            echo "- 源码：${{ env.BUILD_SRC }}"
+            echo "- Kernel: ${{ env.KVER }}"
+            echo "- WIFI 密码：147258369"
+            echo "- LAN 地址：10.0.0.1"
+            echo "- 账户：root"
+            echo "- 密码：无"
+            echo "- no_wifi 后缀的版本未包含 WIFI 驱动程序"
+          } > release_body.txt
 
       - name: Release Firmware
         uses: softprops/action-gh-release@v3
@@ -215,10 +188,49 @@ jobs:
           tag_name: ${{ env.BUILD_DATE }}_${{ env.DEVICE_MODEL }}
           files: |
             ./firmware/*.bin
-            ./firmware/*.manifest
+            ./firmware/immortalwrt-*.manifest
             ./firmware/*.img.gz
             ./firmware/*.itb
             ./firmware/*.fip
             ./firmware/*.ubi
           body_path: ./release_body.txt
           make_latest: true
+
+      - name: Cleanup Old Versions
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 保留最近 2 个版本，删除其他
+          echo "开始清理旧版本..."
+          
+          # 清理 Releases 和关联的 tags
+          echo "清理旧版本的 Releases..."
+          gh release list --json tagName --jq '.[].tagName' 2>/dev/null | \
+            tail -n +3 | while read -r tag; do
+              echo "删除 release: $tag"
+              gh release delete "$tag" --cleanup-tag --yes 2>/dev/null || true
+            done
+          
+          # 清理孤立的 tags
+          echo "清理孤立的 tags..."
+          git fetch --tags 2>/dev/null || true
+          git tag -l | tail -n +3 | while read -r tag; do
+            echo "删除 tag: $tag"
+            git tag -d "$tag" 2>/dev/null || true
+            git push origin --delete "$tag" 2>/dev/null || true
+          done
+          git push origin --tags --prune 2>/dev/null || true
+          
+          # 清理 Workflow 运行记录
+          echo "清理旧的 Workflow 运行记录..."
+          RUN_IDS=$(gh api /repos/${{ github.repository }}/actions/workflows/release.yml/runs \
+            --paginate --jq '.workflow_runs | sort_by(.created_at) | reverse | .[2:].id' 2>/dev/null)
+          if [ -n "$RUN_IDS" ]; then
+            echo "$RUN_IDS" | while read -r run_id; do
+              echo "删除 workflow run: $run_id"
+              gh api -X DELETE /repos/${{ github.repository }}/actions/runs/"$run_id" 2>/dev/null || true
+            done
+          fi
+          
+          echo "清理完成！"

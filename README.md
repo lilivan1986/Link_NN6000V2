@@ -3,8 +3,8 @@
 ## 1. 项目信息
 
 - **参考脚本**：<https://github.com/ZqinKing/wrt_release.git>
-- **源码来源**：<https://github.com/VIKINGYFY/immortalwrt.git> - main 自带满血NSS驱动
-- **设备支持**：Link\_NN6000V2,内核分区12m
+- **源码来源**：<https://github.com/VIKINGYFY/immortalwrt.git> - main
+- **设备支持**：Link\_NN6000V2，内核分区 12m（固件包含带 WiFi 和不带 WiFi 版本）
 - **固件发布**：每三天发布一次，包含最新源码和插件。[点击下载](https://github.com/wzdddyy/Link_NN6000V2/releases/latest)
 
 ***
@@ -62,12 +62,19 @@
 ```
 Link_NN6000V2/
 └── nn6000v2/              # 设备专用目录
+    ├── configs/           # 固件配置文件目录
     ├── patches/           # 设备补丁目录
-    │   ├── cpuusage       # CPU使用率补丁
+    │   ├── cpuusage       # CPU 使用率补丁
+    │   ├── hnatusage      # HNA 使用率补丁
+    │   ├── smp_affinity   # SMP 中断平衡补丁
     │   └── tempinfo       # 温度信息补丁
     └── scripts/           # 编译脚本目录
         ├── build.sh       # 编译脚本
-        └── feeds.sh       # feeds配置脚本
+        ├── feeds.sh       # feeds 配置脚本
+        ├── general.sh     # 通用设置脚本
+        ├── packages.sh    # 包管理脚本
+        ├── system.sh      # 系统配置脚本
+        └── update.sh      # 更新脚本
 ```
 
 ***
