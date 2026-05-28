@@ -13,6 +13,16 @@ update_feeds() {
         echo "src-git openwrt_packages https://github.com/kenzok8/openwrt-packages.git" >>"$FEEDS_PATH"
     fi
 
+    if ! grep -q "OpenClash" "$FEEDS_PATH"; then
+        [ -z "$(tail -c 1 "$FEEDS_PATH")" ] || echo "" >>"$FEEDS_PATH"
+        echo "src-git openclash https://github.com/vernesong/OpenClash.git;master" >>"$FEEDS_PATH"
+    fi
+
+    if ! grep -q "luci-app-mosdns" "$FEEDS_PATH"; then
+        [ -z "$(tail -c 1 "$FEEDS_PATH")" ] || echo "" >>"$FEEDS_PATH"
+        echo "src-git mosdns https://github.com/sbwml/luci-app-mosdns.git;v5" >>"$FEEDS_PATH"
+    fi
+
     if [ ! -f "$BUILD_DIR/include/bpf.mk" ]; then
         touch "$BUILD_DIR/include/bpf.mk"
     fi
