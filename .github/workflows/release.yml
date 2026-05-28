@@ -1,6 +1,5 @@
 name: Go_Release
 
-于:
   workflow_dispatch:
     inputs:
       pppoe_username:
