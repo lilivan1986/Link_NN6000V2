@@ -1,16 +1,16 @@
 name: Go_Release
 
-on:
+于:
   workflow_dispatch:
     inputs:
       pppoe_username:
         description: 'PPPoE 宽带账号 (留空使用默认值 "-")'
         required: false
-        default: '-'
+        默认: '-'
       pppoe_password:
         description: 'PPPoE 宽带密码 (留空使用默认值 "-")'
         required: false
-        default: '-'
+        默认: '-'
   schedule:
     # 每 3 天编译一次（UTC 时间，北京时间 = UTC+8）
     # UTC 20:00 = 北京时间 04:00
@@ -219,7 +219,7 @@ jobs:
             echo "- 源码：${{ env.BUILD_SRC }}"
             echo "- Kernel: ${{ env.KVER }}"
             echo "- WIFI 密码：147258369"
-            echo "- LAN 地址：10.0.0.1"
+            echo "- LAN 地址：192.168.100.1"
             echo "- 账户：root"
             echo "- 密码：无"
             echo "- no_wifi 后缀的版本未包含 WIFI 驱动程序"
@@ -229,7 +229,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.BUILD_DATE }}_${{ env.DEVICE_MODEL }}
-          files: |
+          文件: |
             ./firmware/*.bin
             ./firmware/immortalwrt-*.manifest
             ./firmware/*.img.gz
