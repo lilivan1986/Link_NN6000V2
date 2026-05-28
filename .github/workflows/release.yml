@@ -1,0 +1,290 @@
+name: Go_Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      pppoe_username:
+        description: 'PPPoE 宽带账号 (留空使用默认值 "-")'
+        required: false
+        default: '-'
+      pppoe_password:
+        description: 'PPPoE 宽带密码 (留空使用默认值 "-")'
+        required: false
+        default: '-'
+  schedule:
+    # 每 3 天编译一次（UTC 时间，北京时间 = UTC+8）
+    # UTC 20:00 = 北京时间 04:00
+    - cron: '0 20 */3 * *'
+
+env:
+  DEVICE_MODEL: link_nn6000v2_immwrt
+  REPO_URL: https://github.com/VIKINGYFY/immortalwrt.git
+  REPO_BRANCH: main
+  BUILD_DIR: imm-nss
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  build:
+    permissions:
+      actions: write
+      contents: write
+    strategy:
+      matrix:
+        os: [ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+      
+      - name: Build System Setup
+        run: |
+          # 步骤 1: 清理预装软件
+          echo "=== Disk Space Before Cleanup ==="
+          df -h
+          
+          # 卸载大型不需要的软件包
+          sudo apt-get purge -y \
+            dotnet* \
+            ghc* \
+            libboost* \
+            android* \
+            swift* \
+            chromium* \
+            chrome* \
+            firefox* \
+            ffmpeg* \
+            powershell* \
+            codeql* \
+            microsoft* \
+            || true
+          
+          sudo apt-get autoremove -y --purge
+          sudo docker system prune -a -f 2>/dev/null || true
+          sudo rm -rf /var/lib/apt/lists/*
+          
+          echo "=== Disk Space After Cleanup ==="
+          df -h
+          
+          # 步骤 2: 初始化构建环境
+          sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+          
+          # 步骤 3: 安装额外依赖
+          sudo -E apt -yqq install dos2unix
+          sudo -E apt -yqq install libfuse-dev
+          
+          # 步骤 4: 清理安装产生的缓存
+          sudo -E apt -yqq autoremove --purge
+          sudo -E apt -yqq autoclean
+          sudo -E apt -yqq clean
+          sudo rm -rf /var/lib/apt/lists/*
+          
+          sudo -E systemctl daemon-reload
+          
+          echo "=== Final Disk Space ==="
+          df -h
+
+      - name: Set Build Date and Timezone
+        run: |
+          sudo -E timedatectl set-timezone "Asia/Shanghai"
+          export BUILD_DATE=$(TZ=UTC-8 date +"%y.%m.%d_%H.%M.%S")
+          echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+          echo "BUILD_SRC=${{ env.REPO_URL }}" >> $GITHUB_ENV
+
+      - name: Clone Source Code
+        run: |
+          chmod +x ./nn6000v2/scripts/update.sh
+          chmod +x ./nn6000v2/scripts/build.sh
+          
+          # 克隆仓库
+          echo "克隆仓库：${{ env.REPO_URL }} 分支：${{ env.REPO_BRANCH }}"
+          git clone --depth 1 -b ${{ env.REPO_BRANCH }} ${{ env.REPO_URL }} ./action_build
+          cd ./action_build && git rev-parse HEAD > ../repo_flag
+          cd ..
+          
+          # 移除国内下载源
+          PROJECT_MIRRORS_FILE="./action_build/scripts/projectsmirrors.json"
+          if [ -f "$PROJECT_MIRRORS_FILE" ]; then
+            sed -i '/.cn\//d; /tencent/d; /aliyun/d' "$PROJECT_MIRRORS_FILE"
+          fi
+
+      - name: Restore Build Dependencies Cache
+        uses: actions/cache/restore@v5.0.4
+        with:
+          path: |
+            ./action_build/.ccache
+            ./action_build/staging_dir
+          key: ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}
+          restore-keys: |
+            ${{ matrix.os }}-
+
+      - name: Refresh the cache
+        run: |
+          if [ -d "./action_build/staging_dir" ]; then
+            find "./action_build/staging_dir" -type d -name "stamp" -not -path "*target*" | while read -r dir; do
+                find "$dir" -type f -exec touch {} +
+            done
+          fi
+
+      - name: Build Firmware
+        run: |
+          # 设置 PPPoE 配置
+          PPPOE_USER="${{ github.event.inputs.pppoe_username || '-' }}"
+          PPPOE_PASS="${{ github.event.inputs.pppoe_password || '-' }}"
+          
+          if [ "$PPPOE_USER" != "-" ] || [ "$PPPOE_PASS" != "-" ]; then
+            echo "正在配置 PPPoE 账号密码..."
+            # 替换脚本中的 PPPoE 配置
+            sed -i "s/^PPPOE_USERNAME=.*/PPPOE_USERNAME=\"$PPPOE_USER\"/" ./nn6000v2/patches/992_network_config.sh
+            sed -i "s/^PPPOE_PASSWORD=.*/PPPOE_PASSWORD=\"$PPPOE_PASS\"/" ./nn6000v2/patches/992_network_config.sh
+            echo "PPPoE Username: $PPPOE_USER"
+            echo "PPPoE Password: [HIDDEN]"
+          else
+            echo "未输入 PPPoE 账号密码，使用默认值 '-'"
+          fi
+          
+          ./nn6000v2/scripts/build.sh ${{ env.DEVICE_MODEL }}
+          
+          # 获取内核版本
+          FIRST_MANIFEST=$(ls ./firmware/immortalwrt-*.manifest 2>/dev/null | head -1)
+          if [ -n "$FIRST_MANIFEST" ]; then
+            echo "Manifest 文件：$FIRST_MANIFEST"
+            echo "查找内核版本..."
+            KVER=$(grep "^kernel " "$FIRST_MANIFEST" | grep -oE "[4-6]\.[0-9]+\.[0-9]+" | head -1 || echo "")
+            if [ -n "$KVER" ]; then
+              echo "KVER=$KVER" >> $GITHUB_ENV
+              echo "内核版本：$KVER"
+            else
+              echo "KVER=unknown" >> $GITHUB_ENV
+              echo "未找到内核版本"
+            fi
+          else
+            echo "KVER=unknown" >> $GITHUB_ENV
+            echo "manifest 文件不存在"
+          fi
+
+      - name: Cleanup Old Cache
+        continue-on-error: true
+        run: |
+          echo "=== Cleaning up old caches ==="
+          
+          # List all caches first
+          echo "Current caches:"
+          gh cache list || true
+          
+          # Delete all caches with the current matrix.os prefix
+          CACHE_PREFIX="${{ matrix.os }}-"
+          echo "Searching caches with prefix: ${CACHE_PREFIX}*"
+          
+          # Get matching cache keys
+          MATCHING_CACHES=$(gh cache list --json key --jq '.[].key' 2>/dev/null | grep "^${CACHE_PREFIX}" || true)
+          
+          if [ -n "$MATCHING_CACHES" ]; then
+            echo "Found caches to delete:"
+            echo "$MATCHING_CACHES" | while IFS= read -r key; do
+              if [ -n "$key" ]; then
+                echo "  → Deleting: $key"
+                gh cache delete "$key" || true
+              fi
+            done
+            echo "Cache cleanup completed"
+          else
+            echo "No matching caches found, skipping cleanup"
+          fi
+          
+          echo "========cache status========"
+          echo "ccache: $(du -sh ./action_build/.ccache 2>/dev/null | cut -f 1 || echo 'N/A')"
+          echo "staging: $(du -sh ./action_build/staging_dir 2>/dev/null | cut -f 1 || echo 'N/A')"
+
+      - name: Save Build Dependencies Cache
+        uses: actions/cache/save@v5.0.4
+        with:
+          path: |
+            ./action_build/.ccache
+            ./action_build/staging_dir
+          key: ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}
+
+      - name: Machine Information
+        run: |
+          echo "=============================================="
+          lscpu | grep -E "name|Core|Thread"
+          echo "=============================================="
+          df -h
+          echo "=============================================="
+
+      - name: Prepare Release Body
+        run: |
+          {
+            echo "## 版本信息"
+            echo "- 源码：${{ env.BUILD_SRC }}"
+            echo "- Kernel: ${{ env.KVER }}"
+            echo "- WIFI 密码：147258369"
+            echo "- LAN 地址：10.0.0.1"
+            echo "- 账户：root"
+            echo "- 密码：无"
+            echo "- no_wifi 后缀的版本未包含 WIFI 驱动程序"
+          } > release_body.txt
+
+      - name: Release Firmware
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.BUILD_DATE }}_${{ env.DEVICE_MODEL }}
+          files: |
+            ./firmware/*.bin
+            ./firmware/immortalwrt-*.manifest
+            ./firmware/*.img.gz
+            ./firmware/*.itb
+            ./firmware/*.fip
+            ./firmware/*.ubi
+          body_path: ./release_body.txt
+          make_latest: true
+
+      - name: Cleanup Old Versions
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=========================================="
+          echo "开始清理旧版本..."
+          echo "=========================================="
+          
+          # ========== 1. 清理 Releases ==========
+          echo "所有 Releases 列表 (按创建时间排序):"
+          gh release list --json tagName,createdAt --jq 'sort_by(.createdAt) | reverse | .[] | {tagName: .tagName, createdAt: .createdAt}'
+          echo ""
+          
+          # 获取所有发布，按创建时间排序，保留最新的2个
+          RELEASES=$(gh release list --json tagName,createdAt --jq 'sort_by(.createdAt) | reverse | .[2:] | .[].tagName')
+          
+          if [ -z "$RELEASES" ]; then
+            echo "无需清理 Release"
+          else
+            echo "删除旧 Release:"
+            echo "$RELEASES" | while read -r tag; do
+              if [ -n "$tag" ]; then
+                echo "  删除：$tag"
+                gh release delete "$tag" --cleanup-tag --yes 2>/dev/null || true
+              fi
+            done
+          fi
+          
+          echo ""
+          echo "✓ 旧版本清理完成"
+          
+          # ========== 2. 清理旧的工作流运行记录 ==========
+          echo ""
+          echo "清理旧的工作流运行记录..."
+          # 显示所有工作流运行记录以供调试
+          echo "所有工作流运行记录 (按创建时间排序):"
+          gh run list --workflow release.yml --json name,databaseId,createdAt --jq 'sort_by(.createdAt) | reverse | .[] | {name: .name, databaseId: .databaseId, createdAt: .createdAt}'
+          echo ""
+          
+          # 获取工作流运行记录，按创建时间排序，保留最新的2个
+          gh run list --workflow release.yml --json databaseId,createdAt --jq 'sort_by(.createdAt) | reverse | .[2:] | .[].databaseId' | while read -r run_id; do
+            if [ -n "$run_id" ]; then
+              echo "  删除工作流运行记录：$run_id"
+              gh run delete "$run_id" 2>/dev/null || true
+            fi
+          done
+          
+          echo "✓ 工作流运行记录清理完成"
