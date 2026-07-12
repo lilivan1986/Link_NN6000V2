@@ -8,6 +8,25 @@ update_feeds() {
 
     sed -i '/^src-link/d' "$FEEDS_PATH"
 
+    
+    # 1. 注入 kenzok8 插件源
+    if ! grep -q "openwrt-packages" "$FEEDS_PATH"; then
+        [ -z "$(tail -c 1 "$FEEDS_PATH")" ] || echo "" >>"$FEEDS_PATH"
+        echo "src-git openwrt_packages https://github.com/kenzok8/openwrt-packages.git" >>"$FEEDS_PATH"
+    fi
+
+    # 2. 注入 OpenClash 官方源
+    if ! grep -q "OpenClash" "$FEEDS_PATH"; then
+        [ -z "$(tail -c 1 "$FEEDS_PATH")" ] || echo "" >>"$FEEDS_PATH"
+        echo "src-git openclash https://github.com/vernesong/OpenClash.git;master" >>"$FEEDS_PATH"
+    fi
+
+    # 3. 注入 MosDNS 官方/主流精简适配源
+    if ! grep -q "luci-app-mosdns" "$FEEDS_PATH"; then
+        [ -z "$(tail -c 1 "$FEEDS_PATH")" ] || echo "" >>"$FEEDS_PATH"
+        echo "src-git mosdns https://github.com/sbwml/luci-app-mosdns.git;v5" >>"$FEEDS_PATH"
+    fi
+
     if ! grep -q "openwrt-packages" "$FEEDS_PATH"; then
         [ -z "$(tail -c 1 "$FEEDS_PATH")" ] || echo "" >>"$FEEDS_PATH"
         echo "src-git openwrt_packages https://github.com/kenzok8/openwrt-packages.git" >>"$FEEDS_PATH"
