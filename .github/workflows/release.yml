@@ -114,7 +114,7 @@ jobs:
           path: |
             ./action_build/.ccache
             ./action_build/staging_dir
-          key: ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}
+          key: ${{ matrix.os }}-${{ hashFiles('repo_flag') }}
           restore-keys: |
             ${{ matrix.os }}-
 
@@ -202,7 +202,7 @@ jobs:
           path: |
             ./action_build/.ccache
             ./action_build/staging_dir
-          key: ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}
+          key: ${{ matrix.os }}-${{ hashFiles('repo_flag') }}
 
       - name: Machine Information
         run: |
