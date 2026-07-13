@@ -8,7 +8,6 @@ update_feeds() {
 
     sed -i '/^src-link/d' "$FEEDS_PATH"
 
-    
     # 1. 注入 kenzok8 插件源
     if ! grep -q "openwrt-packages" "$FEEDS_PATH"; then
         [ -z "$(tail -c 1 "$FEEDS_PATH")" ] || echo "" >>"$FEEDS_PATH"
