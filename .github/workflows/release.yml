@@ -30,7 +30,8 @@ jobs:
       contents: write
     strategy:
       matrix:
-        os: [ubuntu-24.04]
+        # 降级到 ubuntu-22.04 彻底避免新版 GCC 头文件标准冲突
+        os: [ubuntu-22.04]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -107,6 +108,23 @@ jobs:
           if [ -f "$PROJECT_MIRRORS_FILE" ]; then
             sed -i '/.cn\//d; /tencent/d; /aliyun/d' "$PROJECT_MIRRORS_FILE"
           fi
+
+      - name: Patch gettext stdcountof issue
+        run: |
+          echo "创建自动补丁目录..."
+          mkdir -p ./action_build/package/libs/gettext-full/patches
+          
+          # 使用 echo 写入，防止 Patch 中的 --- 破坏 YAML 文件语法
+          {
+            echo "--- a/gettext-runtime/gnulib-lib/options.h"
+            echo "+++ b/gettext-runtime/gnulib-lib/options.h"
+            echo "@@ -160,7 +160,7 @@"
+            echo " "
+            echo "-#include <stdcountof.h>"
+            echo "+//#include <stdcountof.h>"
+          } > ./action_build/package/libs/gettext-full/patches/999-fix-stdcountof.patch
+
+          echo "补丁创建成功！"
 
       - name: Restore Build Dependencies Cache
         uses: actions/cache/restore@v5.0.4
