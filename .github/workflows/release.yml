@@ -12,9 +12,9 @@ on:
         required: false
         default: '-'
   schedule:
-    # 每 3 天编译一次（UTC 时间，北京时间 = UTC+8）
+    # 每 7 天编译一次（UTC 时间，北京时间 = UTC+8）
     # UTC 20:00 = 北京时间 04:00
-    - cron: '0 20 */3 * *'
+    - cron: '0 20 */7 * *'
 
 env:
   DEVICE_MODEL: link_nn6000v2_immwrt
@@ -114,7 +114,7 @@ jobs:
           path: |
             ./action_build/.ccache
             ./action_build/staging_dir
-          key: ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}
+          key: ${{ matrix.os }}-${{ hashFiles('repo_flag') }}
           restore-keys: |
             ${{ matrix.os }}-
 
@@ -202,7 +202,7 @@ jobs:
           path: |
             ./action_build/.ccache
             ./action_build/staging_dir
-          key: ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}
+          key: ${{ matrix.os }}-${{ hashFiles('repo_flag') }}
 
       - name: Machine Information
         run: |
@@ -218,8 +218,8 @@ jobs:
             echo "## 版本信息"
             echo "- 源码：${{ env.BUILD_SRC }}"
             echo "- Kernel: ${{ env.KVER }}"
-            echo "- WIFI 密码：1234567890"
-            echo "- LAN 地址：192.168.100.1"
+            echo "- WIFI 密码：147258369"
+            echo "- LAN 地址：10.0.0.1"
             echo "- 账户：root"
             echo "- 密码：无"
             echo "- no_wifi 后缀的版本未包含 WIFI 驱动程序"
@@ -253,8 +253,8 @@ jobs:
           gh release list --json tagName,createdAt --jq 'sort_by(.tagName) | reverse | .[] | {tagName: .tagName, createdAt: .createdAt}'
           echo ""
           
-          # 获取所有发布
-          RELEASES=$(gh release list --json tagName --jq 'sort_by(.tagName) | reverse | .[2:] | .[].tagName')
+          # 获取所有发布（保留最新的 10 个）
+          RELEASES=$(gh release list --json tagName --jq 'sort_by(.tagName) | reverse | .[10:] | .[].tagName')
           
           if [ -z "$RELEASES" ]; then
             echo "无需清理 Release"
@@ -279,8 +279,8 @@ jobs:
           gh run list --workflow release.yml --json name,databaseId,createdAt --jq 'sort_by(.createdAt) | reverse | .[] | {name: .name, databaseId: .databaseId, createdAt: .createdAt}'
           echo ""
           
-          # 获取工作流运行记录，按创建时间排序，保留最新的2个
-          gh run list --workflow release.yml --json databaseId,createdAt --jq 'sort_by(.createdAt) | reverse | .[2:] | .[].databaseId' | while read -r run_id; do
+          # 获取工作流运行记录，按创建时间排序，保留最新的 10 个
+          gh run list --workflow release.yml --json databaseId,createdAt --jq 'sort_by(.createdAt) | reverse | .[10:] | .[].databaseId' | while read -r run_id; do
             if [ -n "$run_id" ]; then
               echo "  删除工作流运行记录：$run_id"
               gh run delete "$run_id" 2>/dev/null || true
